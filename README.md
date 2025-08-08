@@ -21,3 +21,31 @@
 git clone https://github.com/yangli-evo/ConSite.git
 cd ConSite
 pip install -e .
+
+### Roadmap
+MVP CLI — FASTA input → CDD search → conserved-site calling → visualization
+Streamlit web interface
+Local RPS-BLAST/HMMER integration
+AI-based conserved-site prediction (optional)
+
+```bash
+consite run \
+  --fasta examples/P05362.fasta \
+  --remote-cdd \
+  --email yangli.evor@email.com \
+  --out results/
+
+```bash
+consite run \
+  --fasta myprotein.fasta \
+  --rpsblast-db /path/to/Cdd_LE/ \
+  --out results/
+
+```bash
+consite run \
+  --fasta myprotein.fasta \
+  --remote-cdd \
+  --top-percent 10 \
+  --out results/
+
+Joey Wagner Yang Li. ConSite: conserved-domain alignment and conserved-site visualization from protein FASTA.
