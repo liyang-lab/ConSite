@@ -2,11 +2,12 @@
 __pycache__/
 *.py[cod]
 *.so
+*.egg-info/
 
 # Virtual environments
 .venv/
 venv/
-env/
+.env/
 
 # OS/Editor
 .DS_Store
@@ -22,3 +23,8 @@ pfam_db/
 *.json
 *.tsv
 *.csv
+*.sto
+*.hmm
+*.h3*
+*.ssi
+
