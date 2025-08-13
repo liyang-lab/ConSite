@@ -16,6 +16,7 @@ env/
 examples/
 results/
 reports/
+pfam_db/
 *.png
 *.svg
 *.json
