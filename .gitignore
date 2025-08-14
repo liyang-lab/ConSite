@@ -18,6 +18,7 @@ examples/
 results/
 reports/
 pfam_db/
+run_notes.txt
 *.png
 *.svg
 *.json
