@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+
+# Optional: bootstrap Pfam once (comment if Yang already has it)
+./scripts/get_pfam.sh pfam_db
+
+# Run the demo
+consite \
+  --fasta examples/P05362.fasta \
+  --pfam-hmm pfam_db/Pfam-A.hmm \
+  --pfam-seed pfam_db/Pfam-A.seed \
+  --out results \
+  --id P05362
