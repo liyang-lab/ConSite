@@ -1,22 +1,39 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "consite"
 version = "0.1.0"
 description = "ConSite: conserved-domain alignment and conserved-site visualization from protein FASTA"
-authors = [{name = "Joey Wagner"}, {name = "Yang Li"}]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Joey Wagner" },
+  { name = "Yang Li" }
+]
 dependencies = [
   "biopython>=1.81",
   "pandas>=2.0",
-  "numpy>=1.24",
-  "scipy>=1.10",
-  "matplotlib>=3.7",
-  "seaborn>=0.12",
+  "numpy>=2.0",
+  "scipy>=1.16",
+  "matplotlib>=3.7"
+  # "seaborn>=0.12", # uncomment only if you import it in src/consite
 ]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: Bio-Informatics"
+]
+
+[project.urls]
+Homepage = "https://github.com/yangli-evo/ConSite"
+Repository = "https://github.com/yangli-evo/ConSite"
 
 [project.scripts]
 consite = "consite.cli:main"
+
