@@ -46,7 +46,7 @@ conda install -c conda-forge hmmer
 hmmsearch --version
 ```
 
-### From Source (1)
+## From Source (1)
 
 ```bash
 git clone https://github.com/yangli-evo/ConSite.git
@@ -266,6 +266,3 @@ Joey Wagner, Yang Li. ConSite: conserved-domain alignment and conserved-site vis
 ## License
 
 This project is licensed under the terms specified in the LICENSE file.
-
-
-
