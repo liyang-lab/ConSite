@@ -15,7 +15,7 @@ def parse_domtbl(domtblout: Path, topn: int = 3) -> List[Hit]:
             if not line or line.startswith("#"):
                 continue
             cols = line.rstrip("\n").split()
-            # target sequence (your protein) is columns 0/1
+            # target sequence (the protein) is columns 0/1
             # query model (Pfam) is columns 3/4
             qname = cols[3]          # e.g. Zn_ribbon_Top1
             qacc  = cols[4]          # e.g. PF03921.21 or "-"
