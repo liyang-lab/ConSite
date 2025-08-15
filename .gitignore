@@ -14,18 +14,20 @@ venv/
 .vscode/
 
 # Project artefacts / temporary
-examples/
 results/
 reports/
-pfam_db/
 run_notes.txt
+
+# Local databases & large external files (user-specific)
+pfam_db/
+
+# Generated files from runs
 *.png
 *.svg
 *.json
 *.tsv
-*.csv
 *.sto
 *.hmm
 *.h3*
 *.ssi
-
+*.log
