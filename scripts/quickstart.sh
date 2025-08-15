@@ -6,8 +6,6 @@ source .venv/bin/activate
 pip install -U pip
 pip install -e .
 
-# Optional: bootstrap Pfam once (comment if Yang already has it)
-./scripts/get_pfam.sh pfam_db
 
 # Run the demo
 consite \
