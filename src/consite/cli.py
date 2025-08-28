@@ -175,6 +175,8 @@ def run_pipeline(
                     hit=h,
                     conserved=set(conserved_local),
                     out_png=panel_png,
+                    cons_values=scores["jsd"],  # <— new: per-position conservation
+                    cons_clip=(5,95), cons_gamma=0.7, cons_smooth=3, cons_show_scale=True
                 )
 
     if not quiet and total:
