@@ -1,0 +1,30 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"   # e.g. v0.1.0
+
+permissions:
+  contents: read
+  id-token: write   # <-- REQUIRED for Trusted Publishing (OIDC)
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -U build twine
+      - run: python -m build
+      - run: twine check dist/*
+
+      # No password/secret needed when PyPI "Publisher" is configured
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

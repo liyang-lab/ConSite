@@ -17,6 +17,13 @@ from .msa_io import read_stockholm
 from .conserve import scores_from_msa
 from .viz import plot_domain_map, plot_alignment_panel
 
+def _ensure_hmmer_or_exit():
+    missing = [t for t in ("hmmsearch","hmmbuild","hmmalign") if shutil.which(t) is None]
+    if missing:
+        tools = ", ".join(missing)
+        raise SystemExit(f"[ERROR] Required HMMER tool(s) not found on PATH: {tools}. "
+                         "Install HMMER 3.x (brew/apt/conda) and try again.")
+
 
 def _write_scores_tsv(
     seq_len: int,
@@ -237,6 +244,10 @@ def main():
             "Either use --remote-cdd (remote CDD mode) OR provide both "
             "--pfam-hmm and --pfam-seed for local Pfam/HMMER mode."
         )
+    
+    if not args.remote_cdd:
+        _ensure_hmmer_or_exit()
+
 
     run_pipeline(
         fasta=args.fasta,
