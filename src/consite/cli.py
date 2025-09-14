@@ -15,7 +15,7 @@ from .parse_domtbl import parse_domtbl
 from .pfam import extract_seed_for_accession
 from .msa_io import read_stockholm
 from .conserve import scores_from_msa
-from .viz import plot_domain_map, plot_alignment_panel
+from .viz import plot_domain_map, plot_alignment_panel, plot_msa_with_gradient  # <-- added import
 
 def _ensure_hmmer_or_exit():
     missing = [t for t in ("hmmsearch","hmmbuild","hmmalign") if shutil.which(t) is None]
@@ -66,6 +66,8 @@ def run_pipeline(
     quiet: bool = False,
     run_id: Optional[str] = None,
     keep: bool = False,
+    msa_panel_nseq: int = 8,                 # <-- added
+    msa_panel_metric: str = "entropy",       # <-- added ("entropy" means use 1-entropy for shading)
 ) -> None:
     """Run either local Pfam/HMMER pipeline or (placeholder) remote CDD mode."""
     ensure_dir(outdir)
@@ -147,6 +149,29 @@ def run_pipeline(
                     print(f"\n[WARN] SEED not found for {h.family}; skipping.")
                 continue
 
+            # ---- NEW: MSA gradient panel from SEED ----
+            seed_msa, seed_ids = read_stockholm(seed_path)
+            n_show = max(1, min(len(seed_ids), int(msa_panel_nseq)))
+            idx = np.linspace(0, len(seed_ids) - 1, n_show, dtype=int)  # simple spread
+            msa_sub = seed_msa[idx, :]
+            names_sub = [seed_ids[k] for k in idx]
+
+            seed_scores = scores_from_msa(seed_msa)
+            if msa_panel_metric == "jsd":
+                col_metric = seed_scores["jsd"]                    # 0..1
+                title_metric = "bg=JSD"
+            else:
+                col_metric = 1.0 - seed_scores["entropy"]          # 1 - entropy in 0..1
+                title_metric = "1 - entropy"
+
+            msa_png = outdir / f"{i}_{h.family}_msa.png"
+            plot_msa_with_gradient(
+                msa_sub, names_sub, msa_png,
+                title=f"{h.family}  ({title_metric})",
+                metric_values=col_metric
+            )
+            # ---- END NEW ----
+
             # Build a temporary HMM from the SEED
             fam_hmm = td / f"{h.family}.hmm"
             run_hmmbuild(seed_path, fam_hmm, log_path=log_path, quiet=quiet)
@@ -182,7 +207,7 @@ def run_pipeline(
                     hit=h,
                     conserved=set(conserved_local),
                     out_png=panel_png,
-                    cons_values=scores["jsd"],  # <— new: per-position conservation
+                    cons_values=scores["jsd"],  # <— per-position conservation
                     cons_clip=(5,95), cons_gamma=0.7, cons_smooth=3, cons_show_scale=True
                 )
 
@@ -225,6 +250,12 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--cpu", type=int, default=4)
     p.add_argument("--jsd-top-percent", type=float, default=10.0)
 
+    # NEW: MSA gradient panel controls
+    p.add_argument("--msa-panel-nseq", type=int, default=8,
+                   help="Rows to show in the MSA gradient panel (from SEED).")
+    p.add_argument("--msa-panel-metric", choices=["entropy", "jsd"], default="entropy",
+                   help="Column metric for gradient: 1-entropy (default) or JSD.")
+
     # Logging / verbosity
     p.add_argument("--log", type=Path, default=None, help="Append external tool logs here.")
     p.add_argument("--quiet", action="store_true", help="Suppress tool stdout/stderr.")
@@ -248,7 +279,6 @@ def main():
     if not args.remote_cdd:
         _ensure_hmmer_or_exit()
 
-
     run_pipeline(
         fasta=args.fasta,
         outdir=args.out,
@@ -263,6 +293,8 @@ def main():
         quiet=args.quiet,
         run_id=args.run_id,
         keep=args.keep,
+        msa_panel_nseq=args.msa_panel_nseq,             # <-- pass through
+        msa_panel_metric=args.msa_panel_metric,         # <-- pass through
     )
 
 

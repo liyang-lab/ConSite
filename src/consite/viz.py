@@ -245,3 +245,69 @@ def plot_alignment_panel(
 
     fig.savefig(str(out_png), dpi=200)
     plt.close(fig)
+
+
+def plot_msa_with_gradient(
+    msa: np.ndarray,
+    names: list[str],
+    out_png: Path,
+    *,
+    title: str,
+    metric_values: np.ndarray,        # length L, in [0,1], higher = more conserved
+    clip: tuple[float, float] = (5, 95),
+    gamma: float = 0.8,
+) -> None:
+    """Draw an MSA with a columnwise grayscale gradient + letters on top."""
+    N, L = msa.shape
+    v = metric_values.astype(float).copy()
+    v[~np.isfinite(v)] = 0.0
+
+    lo_p, hi_p = clip
+    lo = float(np.percentile(v, lo_p)) if hi_p > lo_p else float(np.min(v))
+    hi = float(np.percentile(v, hi_p)) if hi_p > lo_p else float(np.max(v))
+    if hi > lo:
+        v = (v - lo) / (hi - lo)
+    else:
+        v[:] = 0.0
+    v = np.clip(v, 0.0, 1.0) ** gamma       # shape midtones
+
+    # Build a background image: same column shade for all rows.
+    bg = np.tile(1.0 - v[None, :], (N, 1))  # dark = conserved
+
+    # Figure sizing tuned for readability
+    fig_w = max(10.0, 0.12 * L)
+    fig_h = max(2.0, 0.35 * N + 0.8)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.imshow(bg, aspect="auto", cmap="gray", interpolation="nearest",
+              extent=[0, L, 0, N])  # data coords: x in [0,L], y in [0,N]
+
+    # Letters (overlay)
+    ax.set_xlim(0, L); ax.set_ylim(0, N)
+    ax.invert_yaxis()  # row 0 at top
+    ax.axis("off")
+
+    # Left margin for names
+    name_ax = ax.inset_axes([-0.22, 0, 0.22, 1], transform=ax.transAxes)
+    name_ax.set_xlim(0, 1); name_ax.set_ylim(0, N); name_ax.invert_yaxis()
+    name_ax.axis("off")
+    for i, nm in enumerate(names):
+        name_ax.text(1.0, i + 0.5, nm, ha="right", va="center", fontsize=10)
+
+    # Characters
+    text_effect = [pe.withStroke(linewidth=0.9, foreground="black", alpha=0.6)]
+    for i in range(N):
+        row = msa[i]
+        for j in range(L):
+            ch = row[j]
+            if ch == "-":
+                continue
+            ax.text(j + 0.5, i + 0.5, ch,
+                    ha="center", va="center",
+                    fontsize=10, color="white",
+                    family="DejaVu Sans Mono",
+                    path_effects=text_effect)
+
+    ax.set_title(title, pad=10, fontsize=14)
+    fig.tight_layout()
+    fig.savefig(str(out_png), dpi=200)
+    plt.close(fig)
