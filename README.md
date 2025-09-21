@@ -1,121 +1,93 @@
 # ConSite
 
-**ConSite** is a bioinformatics tool that takes a protein FASTA sequence as input, identifies conserved domains via local Pfam/HMMER searches, detects conserved sites within aligned regions, and outputs both structured data and publication-quality visualizations.
+ConSite takes a protein FASTA sequence, finds conserved domains via local Pfam/HMMER, aligns your sequence to each domain, scores per-position conservation, and renders publication-quality figures and structured outputs.
 
 ## Features
 
-- **FASTA input → conserved domain search** using local Pfam database and HMMER
-- **Automatic domain alignment** using Pfam SEED alignments
-- **Per-position conservation scoring** (entropy, Jensen–Shannon divergence, consensus frequency)
-- **Conserved site detection** with adjustable thresholds
-- **Publication-quality visualization**:
-  - Linear domain maps with highlighted conserved sites
-  - Per-domain alignment panels with legible sequence display
-  - Hollow red circles marking conserved positions
-- **Command-line interface (CLI)** with comprehensive logging
-- **Reproducible outputs** (JSON, TSV, PNG, Stockholm alignments)
+- **FASTA → Pfam domain search** (local HMMER)
+- **Automatic alignment to each hit** using the family's Pfam SEED HMM
+- **Per-position conservation**: entropy, Jensen–Shannon divergence (JSD), consensus frequency, coverage
+- **Conserved site calling** (top-X% by JSD, per domain)
+- **Publication-quality visualization**
+  - Linear domain map with hollow-red conserved sites
+  - **MSA gradient panels** (from Pfam SEED): brightness-floored grayscale so letters remain legible; supports species labels, optional query row at top, gap glyphs (dash/dot/none), coverage masking/weighting
+  - Per-domain alignment panels for the query with optional conservation background scale
+- **Reproducible outputs** (JSON, TSV, PNG, Stockholm) and clear CLI logging
 
 ## Installation
 
+### Option A: PyPI (recommended)
+
+```bash
+python -m pip install consite
+```
+
 ### Prerequisites
 
-- Python 3.10 or higher
-- HMMER 3.x installed and available in PATH
-- Pfam database files (see Quick Start below)
+- Python ≥ 3.10
+- HMMER 3.x in your `PATH`
+- Pfam database files (see Quick Start)
 
-#### Installing HMMER
+#### Install HMMER:
+- **macOS (Homebrew)**: `brew install hmmer`
+- **Linux (APT)**: `sudo apt-get update && sudo apt-get install hmmer`
+- **Windows (conda)**: `conda install -c conda-forge hmmer`
 
-**macOS (Homebrew):**
-```bash
-brew install hmmer
-```
-
-**Linux (APT):**
-```bash
-sudo apt-get update
-sudo apt-get install hmmer
-```
-
-**Windows (conda):**
-```bash
-conda install -c conda-forge hmmer
-```
-
-**Verify installation:**
-```bash
-hmmsearch --version
-```
-
-## From Source (1)
-
-```bash
-git clone https://github.com/yangli-evo/ConSite.git
-cd ConSite
-```
+Verify: `hmmsearch --version`
 
 ## Quick Start
 
-### Option 1: Automatic Setup (Recommended) (2)
+### 1) Get the Pfam database
 
-We provide helper scripts to automate the setup process:
+Use the helper script:
 
 ```bash
-# Make scripts executable
 chmod +x scripts/*.sh
-
-# Download and set up Pfam database
 ./scripts/get_pfam.sh
-
-# Run the demo
-./scripts/quickstart.sh
 ```
 
-**Note:** The scripts have different purposes:
-- **`get_pfam.sh`**: Downloads and prepares the Pfam database files
-- **`quickstart.sh`**: Sets up the Python environment and runs the demo
+This downloads `Pfam-A.hmm` and `Pfam-A.seed`, uncompresses, and runs `hmmpress`.
 
-### Option 2: Manual Setup (2)
+(Manual alternative is in "Manual Setup" below.)
 
-If you prefer to set up things manually or already have some components:
-
-#### 1. Install ConSite
+### 2) Run ConSite (demo)
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
-```
-
-#### 2. Download Pfam Database
-
-```bash
-# Create directory for Pfam files
-mkdir -p pfam_db
-
-# Download Pfam-A HMM library
-curl -L -o pfam_db/Pfam-A.hmm.gz https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
-gunzip pfam_db/Pfam-A.hmm.gz
-
-# Download Pfam-A SEED alignments
-curl -L -o pfam_db/Pfam-A.seed.gz https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.seed.gz
-gunzip pfam_db/Pfam-A.seed.gz
-
-# Press the HMM library for HMMER
-hmmpress pfam_db/Pfam-A.hmm
-```
-
-### 3. Run ConSite
-
-```bash
-# Basic run with example protein
 consite \
   --fasta examples/P05362.fasta \
   --pfam-hmm pfam_db/Pfam-A.hmm \
   --pfam-seed pfam_db/Pfam-A.seed \
   --out results \
   --id P05362
+```
 
-# With custom parameters
+### Manual Setup (from source)
+
+```bash
+git clone https://github.com/yangli-evo/ConSite.git
+cd ConSite
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e .
+
+# (then run ./scripts/get_pfam.sh, or manually download + hmmpress)
+```
+
+### Manual Pfam download:
+
+```bash
+mkdir -p pfam_db
+curl -L -o pfam_db/Pfam-A.hmm.gz https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
+curl -L -o pfam_db/Pfam-A.seed.gz https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.seed.gz
+gunzip -f pfam_db/Pfam-A.hmm.gz pfam_db/Pfam-A.seed.gz
+hmmpress pfam_db/Pfam-A.hmm
+```
+
+## Usage
+
+### Basic:
+
+```bash
 consite \
   --fasta myprotein.fasta \
   --pfam-hmm pfam_db/Pfam-A.hmm \
@@ -127,142 +99,133 @@ consite \
   --log results/run.log
 ```
 
-## Output Files (4)
+### MSA panel tuned example (SEED gradient = JSD, labels with species+id, include query row, safe brightness):
 
-Each run produces a results folder containing:
+```bash
+consite \
+  --fasta examples/GS2.fasta \
+  --pfam-hmm pfam_db/Pfam-A.hmm \
+  --pfam-seed pfam_db/Pfam-A.seed \
+  --out results \
+  --id GS2 \
+  --msa-panel-nseq 8 \
+  --msa-panel-metric jsd \
+  --msa-labels species+id \
+  --msa-include-query \
+  --msa-min-brightness 0.28 \
+  --panel-min-brightness 0.22
+```
 
-- **`query.fasta`** - Input sequence used for analysis
-- **`hits.json`** - Structured domain hit information
-- **`scores.tsv`** - Per-position conservation scores and flags (columns: pos, in_domain, jsd, entropy, is_conserved)
-- **`domain_map.png`** - Full sequence domain visualization with conserved sites marked
-- **`*_panel.png`** - Individual domain alignment panels showing sequence and conserved positions
-- **`*_aligned.sto`** - Stockholm format alignments of query to domain HMMs
-- **`hmmsearch.domtblout`** - Raw HMMER domain table output
-- **`run.log`** - Complete log of all external tool executions
+## Outputs
 
-## Command Line Options (5)
+For each run you'll get a folder `results/<id>/` containing:
+
+- **`query.fasta`** – input sequence
+- **`hits.json`** – Pfam hits (family, coords, scores)
+- **`scores.tsv`** – per-position tracks (columns: `pos`, `in_domain`, `jsd`, `entropy`, `is_conserved`)
+- **`domain_map.png`** – linear domain map with conserved sites
+- **`*_panel.png`** – per-domain query panels with conserved sites (hollow red)
+- **`*_msa.png`** – Pfam SEED MSA panels with grayscale conservation gradient, labels, and optional query row
+- **`*_aligned.sto`** – Stockholm alignment of query to each family HMM
+- **`hmmsearch.domtblout`** – raw HMMER domain table
+- **`run.log`** – external tool logs
+
+## Command-line Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--fasta` | Input protein FASTA file | Required |
-| `--pfam-hmm` | Path to Pfam-A.hmm (pressed) | Required |
-| `--pfam-seed` | Path to Pfam-A.seed | Required |
-| `--out` | Output directory | Required |
-| `--id` | Custom run ID (default: FASTA header) | Auto-detected |
-| `--topn` | Number of top domains to analyze | 2 |
-| `--cpu` | Number of CPU cores for HMMER | 4 |
-| `--jsd-top-percent` | Top % of positions called conserved | 10.0 |
-| `--log` | Log file for external tool output | `results/<id>/run.log` |
+| `--fasta` | input protein FASTA | **Required** |
+| `--pfam-hmm` | Path to `Pfam-A.hmm` (pressed) | **Required** |
+| `--pfam-seed` | Path to `Pfam-A.seed` | **Required** |
+| `--out` | Output directory | **Required** |
+| `--id` | Custom run ID (subfolder name) | FASTA header |
+| `--topn` | Number of top Pfam hits to analyze | 2 |
+| `--cpu` | HMMER threads | 4 |
+| `--jsd-top-percent` | Top % (by JSD) called conserved within each domain | 10.0 |
+| `--log` | Append external tool output to this file | `results/<id>/run.log` |
 | `--quiet` | Suppress console output | False |
-| `--keep` | Preserve existing output folder | False |
+| `--keep` | Keep existing output folder (don't overwrite) | False |
 
-## How It Works (6)
+### MSA panel (SEED) controls
 
-1. **Domain Detection**: Uses `hmmsearch` against Pfam-A.hmm to identify conserved domains
-2. **SEED Extraction**: Pulls the corresponding Pfam SEED alignment for each hit
-3. **HMM Building**: Creates a per-family HMM from the SEED using `hmmbuild`
-4. **Sequence Alignment**: Aligns the query protein to the domain HMM using `hmmalign`
-5. **Conservation Scoring**: Computes JSD and entropy scores for each position
-6. **Visualization**: Generates domain maps and alignment panels
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--msa-panel-nseq` | Rows to display from the SEED alignment | 8 |
+| `--msa-panel-metric` | Gradient metric: `entropy` → uses 1-entropy, or `jsd` | `entropy` |
+| `--msa-labels` | Row labels: `id`, `species`, `species+id` | `species+id` |
+| `--msa-include-query` | Prepend query row to the MSA panel | off |
+| `--msa-min-brightness` | Floor for background brightness (keeps letters legible) | 0.26 |
+| `--msa-min-coverage` | Mask columns below this coverage in panels (0–1) | 0.30 |
+| `--cons-weight-coverage` | Weight conservation by coverage (alpha) | 1.0 |
+| `--mask-inserts` | Use RF to mask insert columns | True |
+| `--gap-glyph` | Gap rendering in MSA: `dash`, `dot`, or `none` | `dash` |
+| `--gap-cell-brightness` | Brightness used in gap cells | 0.90 |
 
-### Current Status
+### Per-domain panel (query) controls
 
-**What works:**
-- Complete domain detection and alignment pipeline
-- Publication-quality visualizations
-- Structured data outputs (JSON, TSV)
-- Robust HMMER integration with logging
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--panel-min-brightness` | Brightness floor for query panels | 0.18 |
 
-**Known limitations:**
-- Conservation scoring currently uses query-only alignment (JSD/entropy are placeholders)
-- Remote CDD mode is not yet implemented
-- Conservation thresholds are relative (top X%) rather than absolute
+## How It Works
 
-**Next steps planned:**
-- Integrate Pfam SEED sequences for real conservation scoring
-- Add absolute conservation thresholds
-- Implement remote CDD mode
+1. **Domain detection:** `hmmsearch` against Pfam-A HMM library (GA thresholds).
+2. **SEED extraction:** the matched family's block is pulled from `Pfam-A.seed`.
+3. **Model building:** `hmmbuild` produces a family HMM.
+4. **Query alignment:** `hmmalign` aligns your sequence to the family model.
+5. **Scoring:**
+   - MSA panels use SEED-based per-column scores (JSD or 1-entropy), with optional coverage masking/weighting.
+   - Conserved sites are called on the query alignment per domain (top-X% by JSD).
+6. **Visualization:** domain map, query panels, and SEED MSA gradient panels.
 
-## Example Output (7)
+## Example (ICAM1)
 
-For the included ICAM1 example (P05362), ConSite identifies:
-- **PF03921** (positions 25-115): Ig-like domain
-- **PF21146** (positions 219-308): Ig-like domain
+For `examples/P05362.fasta`, ConSite typically finds:
 
-The tool produces clean visualizations showing domain boundaries and conserved sites as hollow red circles.
+- **PF03921** (~25–115): Ig-like domain
+- **PF21146** (~219–308): Ig-like domain
 
-### Expected Results
+You'll see two `*_panel.png`, two `*_msa.png`, a `domain_map.png`, plus `hits.json` and `scores.tsv`.
 
-After running the demo, you should see:
-- A `results/P05362/` folder containing all outputs
-- Two domain panels: `1_PF03921_panel.png` and `2_PF21146_panel.png`
-- A full sequence map: `domain_map.png`
-- Structured data: `hits.json` and `scores.tsv`
+## Troubleshooting
 
-## Troubleshooting (8)
+- **`command not found: hmmsearch`**
+  Install HMMER and ensure it's on your `PATH` ( `which hmmsearch` ).
 
-### Common Issues
+- **`No such file or directory: pfam_db/Pfam-A.hmm`**
+  Run `./scripts/get_pfam.sh` or download manually and `hmmpress`.
 
-**"command not found: hmmsearch"**
-- Install HMMER using the instructions in Prerequisites above
-- Ensure it's in your PATH: `which hmmsearch`
+- **Large/verbose logs**
+  Use `--quiet` and/or inspect `run.log`.
 
-**"No such file or directory: pfam_db/Pfam-A.hmm"**
-- Run the helper script: `./scripts/get_pfam.sh`
-- Or manually download Pfam files as shown in Manual Setup
+## Development
 
-**"Permission denied" when running scripts**
-- Make scripts executable: `chmod +x scripts/*.sh`
-
-**Large log files**
-- Use `--quiet` to suppress verbose output
-- Check `--log` path is writable
-
-## Development (9)
-
-### Current Project Structure
-
-```
+```bash
 ConSite/
-├── src/consite/          # Main package source
-│   ├── cli.py            # Command-line interface
-│   ├── hmmer_local.py    # HMMER tool wrappers
+├── src/consite/
+│   ├── cli.py            # CLI
+│   ├── hmmer_local.py    # HMMER wrappers
 │   ├── parse_domtbl.py   # HMMER output parsing
 │   ├── pfam.py           # Pfam SEED extraction
-│   ├── msa_io.py         # Multiple sequence alignment I/O
-│   ├── conserve.py       # Conservation scoring algorithms
-│   ├── viz.py            # Visualization functions
-│   └── utils.py          # Shared utilities
-├── examples/              # Example input files
-├── scripts/               # Helper automation scripts
-├── pfam_db/              # Pfam database files (not included in repo)
-└── results/               # Output directory (not included in repo)
+│   ├── msa_io.py         # Stockholm I/O (+RF)
+│   ├── conserve.py       # Scoring (entropy/JSD/coverage)
+│   └── viz.py            # Plots (domain map, panels, MSA gradient)
+├── scripts/              # Helper scripts (get_pfam, quickstart)
+├── examples/             # Example FASTA files
+└── pfam_db/              # Pfam files (user-provided)
 ```
 
-### Important Notes for Collaborators
+**Dependencies:** biopython ≥1.81, numpy ≥2.0, pandas ≥2.0, scipy ≥1.16, matplotlib ≥3.7, Python ≥3.10.
 
-- **Large files are excluded**: The `pfam_db/` and `results/` directories are in `.gitignore`
-- **Pfam database**: You'll need to download this using the helper scripts
-- **Virtual environment**: The `.venv/` folder is also excluded - you'll create your own
-- **Example data**: The `examples/P05362.fasta` file is included for testing
+## Notes & Roadmap
 
-### Dependencies
+- Remote CDD mode is stubbed (local Pfam/HMMER path is fully supported).
+- Current conserved-site calls are **relative** (top-X%); absolute thresholds are planned.
 
-- **biopython** ≥ 1.81 - Sequence and alignment handling
-- **numpy** ≥ 2.0 - Numerical computations
-- **matplotlib** ≥ 3.7 - Visualization generation
-- **pandas** ≥ 2.0 - Data manipulation
-- **scipy** ≥ 1.16 - Scientific computing
-- **Python** ≥ 3.10 - Required Python version
+## Citation
 
-## Citation (10)
-
-If you use ConSite in your research, please cite:
-
-```
-Joey Wagner, Yang Li. ConSite: conserved-domain alignment and conserved-site visualization from protein FASTA.
-```
+**Joey Wagner, Yang Li.** ConSite: conserved-domain alignment and conserved-site visualization from protein FASTA.
 
 ## License
 
-This project is licensed under the terms specified in the LICENSE file.
+MIT (see `LICENSE`).
