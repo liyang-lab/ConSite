@@ -8,14 +8,21 @@ from Bio import SeqIO
 import numpy as np
 import re
 import shutil
+from typing import Tuple
+
 
 from .utils import ensure_dir, Hit
 from .hmmer_local import run_hmmsearch, run_hmmbuild, run_hmmalign
 from .parse_domtbl import parse_domtbl
 from .pfam import extract_seed_for_accession
-from .msa_io import read_stockholm
+from .msa_io import read_stockholm, read_stockholm_with_meta
 from .conserve import scores_from_msa
 from .viz import plot_domain_map, plot_alignment_panel, plot_msa_with_gradient  # <-- added import
+
+def _split_id_range(s: str) -> Tuple[str, str]:
+    """Split "A0A...._HUMAN/24-115" -> ("A0A...._HUMAN", "24-115")"""
+    m = re.match(r"^(.+?)/(\d+-\d+)$", s)
+    return (m.group(1), m.group(2)) if m else (s, "")
 
 def _ensure_hmmer_or_exit():
     missing = [t for t in ("hmmsearch","hmmbuild","hmmalign") if shutil.which(t) is None]
@@ -68,6 +75,10 @@ def run_pipeline(
     keep: bool = False,
     msa_panel_nseq: int = 8,                 # <-- added
     msa_panel_metric: str = "entropy",       # <-- added ("entropy" means use 1-entropy for shading)
+    msa_labels: str = "species+id",          # <-- added
+    msa_include_query: bool = False,         # <-- added
+    msa_min_brightness: float = 0.25,        # <-- added
+    panel_min_brightness: float = 0.18,      # <-- added
 ) -> None:
     """Run either local Pfam/HMMER pipeline or (placeholder) remote CDD mode."""
     ensure_dir(outdir)
@@ -150,11 +161,25 @@ def run_pipeline(
                 continue
 
             # ---- NEW: MSA gradient panel from SEED ----
-            seed_msa, seed_ids = read_stockholm(seed_path)
+            seed_msa, seed_ids, seed_meta = read_stockholm_with_meta(seed_path)
             n_show = max(1, min(len(seed_ids), int(msa_panel_nseq)))
             idx = np.linspace(0, len(seed_ids) - 1, n_show, dtype=int)  # simple spread
             msa_sub = seed_msa[idx, :]
-            names_sub = [seed_ids[k] for k in idx]
+            names_sub = []
+            for k in idx:
+                raw = seed_ids[k]
+                if msa_labels == "id":
+                    names_sub.append(raw)
+                elif msa_labels == "species":
+                    base, rng = _split_id_range(raw)
+                    species = seed_meta.get(base, {}).get("species") or base.split("_")[-1]
+                    label = f"{species}/{rng}" if rng else species
+                    names_sub.append(label)
+                else:  # species+id (default)
+                    base, rng = _split_id_range(raw)
+                    species = seed_meta.get(base, {}).get("species") or base.split("_")[-1]
+                    label = f"{species}/{rng} ({base})" if rng else f"{species} ({base})"
+                    names_sub.append(label)
 
             seed_scores = scores_from_msa(seed_msa)
             if msa_panel_metric == "jsd":
@@ -164,13 +189,6 @@ def run_pipeline(
                 col_metric = 1.0 - seed_scores["entropy"]          # 1 - entropy in 0..1
                 title_metric = "1 - entropy"
 
-            msa_png = outdir / f"{i}_{h.family}_msa.png"
-            plot_msa_with_gradient(
-                msa_sub, names_sub, msa_png,
-                title=f"{h.family}  ({title_metric})",
-                metric_values=col_metric
-            )
-            # ---- END NEW ----
 
             # Build a temporary HMM from the SEED
             fam_hmm = td / f"{h.family}.hmm"
@@ -181,6 +199,27 @@ def run_pipeline(
             SeqIO.write([rec], str(q_fa), "fasta")
             sto = outdir / f"{i}_{h.family}_aligned.sto"
             run_hmmalign(fam_hmm, q_fa, sto, log_path=log_path, quiet=quiet)
+
+            # Conditionally include the query row in the MSA panel
+            if msa_include_query:
+                q_msa, _ = read_stockholm(sto)  # contains the query aligned to the model
+                q_row = q_msa[0:1, :]               # only one sequence aligned
+                q_label = f"QUERY: {rec.id}"
+                # prepend the query to the mini-MSA
+                final_msa = np.vstack([q_row, msa_sub])
+                final_names = [q_label] + names_sub
+            else:
+                final_msa = msa_sub
+                final_names = names_sub
+
+            # and render this
+            msa_png = outdir / f"{i}_{h.family}_msa.png"
+            plot_msa_with_gradient(
+                final_msa, final_names, msa_png,
+                title=f"{h.family}  ({title_metric})",
+                metric_values=col_metric,
+                min_brightness=msa_min_brightness
+            )
 
             # Score conservation (JSD/entropy) and call top X% within domain span
             msa, _ = read_stockholm(sto)
@@ -208,7 +247,8 @@ def run_pipeline(
                     conserved=set(conserved_local),
                     out_png=panel_png,
                     cons_values=scores["jsd"],  # <— per-position conservation
-                    cons_clip=(5,95), cons_gamma=0.7, cons_smooth=3, cons_show_scale=True
+                    cons_clip=(5,95), cons_gamma=0.7, cons_smooth=3, cons_show_scale=True,
+                    cons_min_brightness=panel_min_brightness
                 )
 
     if not quiet and total:
@@ -255,6 +295,15 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="Rows to show in the MSA gradient panel (from SEED).")
     p.add_argument("--msa-panel-metric", choices=["entropy", "jsd"], default="entropy",
                    help="Column metric for gradient: 1-entropy (default) or JSD.")
+    p.add_argument("--msa-labels", choices=["id", "species", "species+id"],
+                   default="species+id",
+                   help="How to label MSA rows.")
+    p.add_argument("--msa-include-query", action="store_true",
+                   help="Add the query as the first row in the MSA panel.")
+    p.add_argument("--msa-min-brightness", type=float, default=0.25,
+                   help="Floor for background brightness in MSA panels (0..1).")
+    p.add_argument("--panel-min-brightness", type=float, default=0.18,
+                   help="Floor for background brightness in per-domain panels (0..1).")
 
     # Logging / verbosity
     p.add_argument("--log", type=Path, default=None, help="Append external tool logs here.")
@@ -295,6 +344,10 @@ def main():
         keep=args.keep,
         msa_panel_nseq=args.msa_panel_nseq,             # <-- pass through
         msa_panel_metric=args.msa_panel_metric,         # <-- pass through
+        msa_labels=args.msa_labels,                     # <-- pass through
+        msa_include_query=args.msa_include_query,       # <-- pass through
+        msa_min_brightness=args.msa_min_brightness,     # <-- pass through
+        panel_min_brightness=args.panel_min_brightness, # <-- pass through
     )
 
 

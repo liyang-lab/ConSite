@@ -79,6 +79,7 @@ def plot_alignment_panel(
     cons_gamma: float = 0.75,                       # <1 brightens mids; >1 darkens
     cons_smooth: int = 0,                           # 0=off, else odd window (e.g., 3)
     cons_show_scale: bool = True,                   # draw a tiny grayscale legend
+    cons_min_brightness: float = 0.18,              # floor for background brightness
 ) -> None:
     """
     ...
@@ -143,7 +144,8 @@ def plot_alignment_panel(
 
             # grayscale color (dark=high)
             def _gray(val: float) -> tuple[float, float, float]:
-                g = 1.0 - float(val)
+                # g in [min_g, 1], where lower = darker
+                g = max(cons_min_brightness, 1.0 - float(val))
                 return (g, g, g)
 
             # Paint before letters/outlines, above the blue band
@@ -256,6 +258,7 @@ def plot_msa_with_gradient(
     metric_values: np.ndarray,        # length L, in [0,1], higher = more conserved
     clip: tuple[float, float] = (5, 95),
     gamma: float = 0.8,
+    min_brightness: float = 0.25,     # floor for background brightness
 ) -> None:
     """Draw an MSA with a columnwise grayscale gradient + letters on top."""
     N, L = msa.shape
@@ -272,7 +275,8 @@ def plot_msa_with_gradient(
     v = np.clip(v, 0.0, 1.0) ** gamma       # shape midtones
 
     # Build a background image: same column shade for all rows.
-    bg = np.tile(1.0 - v[None, :], (N, 1))  # dark = conserved
+    # Enforce a minimum brightness so letters never vanish
+    bg = min_brightness + (1.0 - min_brightness) * (1.0 - v[None, :])  # dark = conserved
 
     # Figure sizing tuned for readability
     fig_w = max(10.0, 0.12 * L)
