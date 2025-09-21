@@ -79,6 +79,7 @@ def run_pipeline(
     msa_include_query: bool = False,
     msa_min_brightness: float = 0.25,
     panel_min_brightness: float = 0.18,
+    panel_bg: str = "jsd",                   # <-- new
     msa_min_coverage: float = 0.3,           # <-- new
     mask_inserts: bool = True,               # <-- new
     gap_glyph: str = "dash",                 # <-- new
@@ -264,7 +265,7 @@ def run_pipeline(
 
                 # For per-domain panel, we use JSD from query alignment
                 # but could mask low coverage regions or disable background entirely
-                domain_cons_values = scores["jsd"] if not mask_inserts else None
+                domain_cons_values = scores["jsd"] if panel_bg == "jsd" else None
 
                 plot_alignment_panel(
                     seq=seq_str,
@@ -329,6 +330,8 @@ def build_argparser() -> argparse.ArgumentParser:
                    help="Floor for background brightness in MSA panels (0..1).")
     p.add_argument("--panel-min-brightness", type=float, default=0.18,
                    help="Floor for background brightness in per-domain panels (0..1).")
+    p.add_argument("--panel-bg", choices=["none","jsd"], default="jsd",
+                   help="Background conservation values for per-domain panels.")
 
     # NEW: Coverage and insert handling
     p.add_argument("--msa-min-coverage", type=float, default=0.3,
@@ -385,6 +388,7 @@ def main():
         msa_include_query=args.msa_include_query,
         msa_min_brightness=args.msa_min_brightness,
         panel_min_brightness=args.panel_min_brightness,
+        panel_bg=args.panel_bg,                         # <-- new
         msa_min_coverage=args.msa_min_coverage,         # <-- new
         mask_inserts=args.mask_inserts,                 # <-- new
         gap_glyph=args.gap_glyph,                       # <-- new
