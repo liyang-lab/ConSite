@@ -73,12 +73,17 @@ def run_pipeline(
     quiet: bool = False,
     run_id: Optional[str] = None,
     keep: bool = False,
-    msa_panel_nseq: int = 8,                 # <-- added
-    msa_panel_metric: str = "entropy",       # <-- added ("entropy" means use 1-entropy for shading)
-    msa_labels: str = "species+id",          # <-- added
-    msa_include_query: bool = False,         # <-- added
-    msa_min_brightness: float = 0.25,        # <-- added
-    panel_min_brightness: float = 0.18,      # <-- added
+    msa_panel_nseq: int = 8,
+    msa_panel_metric: str = "entropy",
+    msa_labels: str = "species+id",
+    msa_include_query: bool = False,
+    msa_min_brightness: float = 0.25,
+    panel_min_brightness: float = 0.18,
+    msa_min_coverage: float = 0.3,           # <-- new
+    mask_inserts: bool = True,               # <-- new
+    gap_glyph: str = "dash",                 # <-- new
+    gap_cell_brightness: float = 0.9,        # <-- new
+    cons_weight_coverage: float = 1.0,       # <-- new
 ) -> None:
     """Run either local Pfam/HMMER pipeline or (placeholder) remote CDD mode."""
     ensure_dir(outdir)
@@ -161,7 +166,7 @@ def run_pipeline(
                 continue
 
             # ---- NEW: MSA gradient panel from SEED ----
-            seed_msa, seed_ids, seed_meta = read_stockholm_with_meta(seed_path)
+            seed_msa, seed_ids, seed_meta, rf_mask = read_stockholm_with_meta(seed_path)
             n_show = max(1, min(len(seed_ids), int(msa_panel_nseq)))
             idx = np.linspace(0, len(seed_ids) - 1, n_show, dtype=int)  # simple spread
             msa_sub = seed_msa[idx, :]
@@ -183,11 +188,21 @@ def run_pipeline(
 
             seed_scores = scores_from_msa(seed_msa)
             if msa_panel_metric == "jsd":
-                col_metric = seed_scores["jsd"]                    # 0..1
+                col_metric = seed_scores["jsd"]
                 title_metric = "bg=JSD"
             else:
-                col_metric = 1.0 - seed_scores["entropy"]          # 1 - entropy in 0..1
+                col_metric = 1.0 - seed_scores["entropy"]
                 title_metric = "1 - entropy"
+
+            # Weight or mask by coverage
+            col_metric = col_metric * (seed_scores["coverage"] ** cons_weight_coverage)
+
+            # Optionally zero out very low-coverage columns outright:
+            col_metric[seed_scores["coverage"] < msa_min_coverage] = np.nan
+
+            # Mask insert columns (RF annotation) if enabled
+            if mask_inserts:
+                col_metric[~rf_mask] = np.nan
 
 
             # Build a temporary HMM from the SEED
@@ -218,7 +233,9 @@ def run_pipeline(
                 final_msa, final_names, msa_png,
                 title=f"{h.family}  ({title_metric})",
                 metric_values=col_metric,
-                min_brightness=msa_min_brightness
+                min_brightness=msa_min_brightness,
+                gap_glyph=gap_glyph,
+                gap_cell_brightness=gap_cell_brightness
             )
 
             # Score conservation (JSD/entropy) and call top X% within domain span
@@ -228,6 +245,9 @@ def run_pipeline(
             jsd = scores["jsd"]
             dom_range = np.arange(max(1, h.ali_start), min(seq_len, h.ali_end) + 1)
             if dom_range.size > 0:
+                # For conserved site calling, we need to map the domain range to the RF positions
+                # Since we don't have RF from hmmalign output, we use the domain positions as-is
+                # but could filter by the SEED RF mask if we had a mapping
                 vals = jsd[dom_range - 1]
                 k = max(1, int(len(vals) * (jsd_top_percent / 100.0)))
                 thr = np.partition(vals, -k)[-k]
@@ -241,12 +261,17 @@ def run_pipeline(
 
                 # Render a per-domain panel PNG (correct signature)
                 panel_png = outdir / f"{i}_{h.family}_panel.png"
+
+                # For per-domain panel, we use JSD from query alignment
+                # but could mask low coverage regions or disable background entirely
+                domain_cons_values = scores["jsd"] if not mask_inserts else None
+
                 plot_alignment_panel(
                     seq=seq_str,
                     hit=h,
                     conserved=set(conserved_local),
                     out_png=panel_png,
-                    cons_values=scores["jsd"],  # <— per-position conservation
+                    cons_values=domain_cons_values,  # <— per-position conservation or None
                     cons_clip=(5,95), cons_gamma=0.7, cons_smooth=3, cons_show_scale=True,
                     cons_min_brightness=panel_min_brightness
                 )
@@ -305,6 +330,18 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--panel-min-brightness", type=float, default=0.18,
                    help="Floor for background brightness in per-domain panels (0..1).")
 
+    # NEW: Coverage and insert handling
+    p.add_argument("--msa-min-coverage", type=float, default=0.3,
+                   help="Mask columns below this coverage in MSA panels (0..1).")
+    p.add_argument("--mask-inserts", action="store_true", default=True,
+                   help="Use RF to mask inserts everywhere (default: True).")
+    p.add_argument("--gap-glyph", choices=["dash", "dot", "none"], default="dash",
+                   help="Glyph to show for gaps in MSA: dash (–), dot (·), or none.")
+    p.add_argument("--gap-cell-brightness", type=float, default=0.9,
+                   help="Brightness for gap cells (0..1, higher = brighter).")
+    p.add_argument("--cons-weight-coverage", type=float, default=1.0,
+                   help="Alpha for coverage weighting in conservation (1.0 = linear).")
+
     # Logging / verbosity
     p.add_argument("--log", type=Path, default=None, help="Append external tool logs here.")
     p.add_argument("--quiet", action="store_true", help="Suppress tool stdout/stderr.")
@@ -342,12 +379,17 @@ def main():
         quiet=args.quiet,
         run_id=args.run_id,
         keep=args.keep,
-        msa_panel_nseq=args.msa_panel_nseq,             # <-- pass through
-        msa_panel_metric=args.msa_panel_metric,         # <-- pass through
-        msa_labels=args.msa_labels,                     # <-- pass through
-        msa_include_query=args.msa_include_query,       # <-- pass through
-        msa_min_brightness=args.msa_min_brightness,     # <-- pass through
-        panel_min_brightness=args.panel_min_brightness, # <-- pass through
+        msa_panel_nseq=args.msa_panel_nseq,
+        msa_panel_metric=args.msa_panel_metric,
+        msa_labels=args.msa_labels,
+        msa_include_query=args.msa_include_query,
+        msa_min_brightness=args.msa_min_brightness,
+        panel_min_brightness=args.panel_min_brightness,
+        msa_min_coverage=args.msa_min_coverage,         # <-- new
+        mask_inserts=args.mask_inserts,                 # <-- new
+        gap_glyph=args.gap_glyph,                       # <-- new
+        gap_cell_brightness=args.gap_cell_brightness,   # <-- new
+        cons_weight_coverage=args.cons_weight_coverage, # <-- new
     )
 
 

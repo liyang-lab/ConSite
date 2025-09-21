@@ -27,12 +27,13 @@ def js_divergence(p: np.ndarray, q: np.ndarray) -> float:
 
 def scores_from_msa(msa: np.ndarray) -> Dict[str, np.ndarray]:
     """msa: array of shape (Nseq, L) with single-letter codes ('-','A',...).
-    Returns dict with entropy, jsd, consensus_freq per column.
+    Returns dict with entropy, jsd, consensus_freq, coverage per column.
     """
     L = msa.shape[1]
     ent = np.zeros(L)
     jsd = np.zeros(L)
     cons = np.zeros(L)
+    cov = (msa != "-").mean(axis=0).astype(float)   # 0..1 coverage
     for j in range(L):
         cnt = column_counts(''.join(msa[:, j]))
         total = cnt.sum()
@@ -45,4 +46,4 @@ def scores_from_msa(msa: np.ndarray) -> Dict[str, np.ndarray]:
     # normalize entropy to [0,1] using max log2(20)
     ent_norm = ent / np.log2(20)
     jsd_norm = jsd / max(jsd.max(), 1e-9)
-    return {"entropy": ent_norm, "jsd": jsd_norm, "consensus": cons}
+    return {"entropy": ent_norm, "jsd": jsd_norm, "consensus": cons, "coverage": cov}

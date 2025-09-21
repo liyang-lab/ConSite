@@ -259,6 +259,8 @@ def plot_msa_with_gradient(
     clip: tuple[float, float] = (5, 95),
     gamma: float = 0.8,
     min_brightness: float = 0.25,     # floor for background brightness
+    gap_glyph: str = "dash",          # <-- new
+    gap_cell_brightness: float = 0.9, # <-- new
 ) -> None:
     """Draw an MSA with a columnwise grayscale gradient + letters on top."""
     N, L = msa.shape
@@ -274,9 +276,15 @@ def plot_msa_with_gradient(
         v[:] = 0.0
     v = np.clip(v, 0.0, 1.0) ** gamma       # shape midtones
 
+    # Handle NaN values (low coverage columns) by setting them to white
+    v = np.nan_to_num(v, nan=0.0)
+
     # Build a background image: same column shade for all rows.
     # Enforce a minimum brightness so letters never vanish
-    bg = min_brightness + (1.0 - min_brightness) * (1.0 - v[None, :])  # dark = conserved
+    bg_full = np.tile(1.0 - v[None, :], (N, 1))         # old approach
+    gap_mask = (msa == "-")
+    bg_full = np.where(gap_mask, gap_cell_brightness, bg_full)  # configurable brightness for gaps
+    bg = min_brightness + (1.0 - min_brightness) * bg_full  # dark = conserved
 
     # Figure sizing tuned for readability
     fig_w = max(10.0, 0.12 * L)
@@ -304,6 +312,18 @@ def plot_msa_with_gradient(
         for j in range(L):
             ch = row[j]
             if ch == "-":
+                # draw a configurable glyph for gaps if not "none"
+                if gap_glyph == "dash":
+                    gap_char = "–"  # en dash looks nicer than "-"
+                elif gap_glyph == "dot":
+                    gap_char = "·"  # middle dot
+                else:  # gap_glyph == "none"
+                    continue
+
+                ax.text(j + 0.5, i + 0.5, gap_char,
+                        ha="center", va="center",
+                        fontsize=9, color="#C0C0C0",
+                        family="DejaVu Sans Mono")
                 continue
             ax.text(j + 0.5, i + 0.5, ch,
                     ha="center", va="center",
