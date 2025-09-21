@@ -216,24 +216,52 @@ def run_pipeline(
             sto = outdir / f"{i}_{h.family}_aligned.sto"
             run_hmmalign(fam_hmm, q_fa, sto, log_path=log_path, quiet=quiet)
 
-            # Conditionally include the query row in the MSA panel
+            # Read the query alignment with RF
+            q_msa, q_ids, q_meta, q_rf = read_stockholm_with_meta(sto)
+
+            # Keep only match columns in each alignment
+            # (lengths differ because of inserts, but the number of match states should agree)
+            seed_match_mask = rf_mask               # from the SEED block you already parsed
+            q_match_mask    = q_rf                  # from hmmalign output
+
+            # Helper: extract match-only array and the model-state index (1..M) for each kept column
+            def _keep_match_with_index(msa_arr: np.ndarray, rf: np.ndarray):
+                assert msa_arr.shape[1] == rf.size, "RF mask length must equal alignment width"
+                kept_idx = np.where(rf)[0]                # column indices to keep
+                kept_msa = msa_arr[:, kept_idx]           # match-only
+                # model-state ordinal for each match column: 1,2,3,... (used to intersect alignments)
+                model_pos = np.cumsum(rf)[rf]             # shape = (#match,)
+                return kept_msa, kept_idx, model_pos
+
+            seed_match_msa, seed_kept_idx, seed_pos = _keep_match_with_index(msa_sub, seed_match_mask)
+            q_match_msa,    q_kept_idx,    q_pos    = _keep_match_with_index(q_msa,    q_match_mask)
+
+            # Intersect by model-state index to guarantee identical column count & order
+            common_pos = np.intersect1d(seed_pos, q_pos)
+            seed_common_mask = np.isin(seed_pos, common_pos)
+            q_common_mask    = np.isin(q_pos,    common_pos)
+
+            seed_match_msa  = seed_match_msa[:, seed_common_mask]
+            q_row_match     = q_match_msa[0:1, q_common_mask]
+
+            # Trim the background metric to the same seed match columns (then to the common set)
+            col_metric_match = col_metric[seed_match_mask]
+            col_metric_match = col_metric_match[seed_common_mask]
+
+            # Build the final panel MSA
             if msa_include_query:
-                q_msa, _ = read_stockholm(sto)  # contains the query aligned to the model
-                q_row = q_msa[0:1, :]               # only one sequence aligned
-                q_label = f"QUERY: {rec.id}"
-                # prepend the query to the mini-MSA
-                final_msa = np.vstack([q_row, msa_sub])
-                final_names = [q_label] + names_sub
+                final_msa   = np.vstack([q_row_match, seed_match_msa])
+                final_names = [f"QUERY: {rec.id}"] + names_sub
             else:
-                final_msa = msa_sub
+                final_msa   = seed_match_msa
                 final_names = names_sub
 
-            # and render this
+            # Render with the trimmed metric so columns align
             msa_png = outdir / f"{i}_{h.family}_msa.png"
             plot_msa_with_gradient(
                 final_msa, final_names, msa_png,
                 title=f"{h.family}  ({title_metric})",
-                metric_values=col_metric,
+                metric_values=col_metric_match,
                 min_brightness=msa_min_brightness,
                 gap_glyph=gap_glyph,
                 gap_cell_brightness=gap_cell_brightness
