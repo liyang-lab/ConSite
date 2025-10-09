@@ -335,3 +335,42 @@ def plot_msa_with_gradient(
     fig.tight_layout()
     fig.savefig(str(out_png), dpi=200)
     plt.close(fig)
+
+
+def plot_similarity_matrix(msa: np.ndarray, names: list[str], out_png: Path) -> np.ndarray:
+    """
+    Compute and plot pairwise % identity for sequences in MSA.
+
+    Args:
+        msa: MSA array (already RF/coverage-trimmed and matches the panel)
+        names: Row labels matching the MSA
+        out_png: Output PNG path
+
+    Returns:
+        N×N similarity matrix (% identity)
+    """
+    N, L = msa.shape
+    M = np.zeros((N, N), dtype=float)
+
+    # Pairwise % identity ignoring gaps
+    for a in range(N):
+        for b in range(N):
+            both = (msa[a] != "-") & (msa[b] != "-")
+            denom = np.count_nonzero(both)
+            num = np.count_nonzero((msa[a] == msa[b]) & both)
+            M[a, b] = 100.0 * num / denom if denom > 0 else np.nan
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(max(4, 0.35 * N), max(3.5, 0.35 * N)))
+    im = ax.imshow(M, aspect="equal")
+    ax.set_xticks(range(N))
+    ax.set_yticks(range(N))
+    ax.set_xticklabels(names, rotation=90, fontsize=8)
+    ax.set_yticklabels(names, fontsize=8)
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("% identity")
+    fig.tight_layout()
+    fig.savefig(str(out_png), dpi=200)
+    plt.close(fig)
+
+    return M
