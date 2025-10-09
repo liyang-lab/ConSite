@@ -126,6 +126,8 @@ For each run you'll get a folder `results/<id>/` containing:
 - **`domain_map.png`** – linear domain map with conserved sites
 - **`*_panel.png`** – per-domain query panels with conserved sites (hollow red)
 - **`*_msa.png`** – Pfam SEED MSA panels with grayscale conservation gradient, labels, and optional query row
+- **`*_sim.png`** – pairwise % identity heatmap among panel sequences (RF-masked columns)
+- **`*_sim.tsv`** – pairwise % identity matrix (TSV)
 - **`*_aligned.sto`** – Stockholm alignment of query to each family HMM
 - **`hmmsearch.domtblout`** – raw HMMER domain table
 - **`run.log`** – external tool logs
@@ -160,6 +162,7 @@ For each run you'll get a folder `results/<id>/` containing:
 | `--mask-inserts` | Use RF to mask insert columns | True |
 | `--gap-glyph` | Gap rendering in MSA: `dash`, `dot`, or `none` | `dash` |
 | `--gap-cell-brightness` | Brightness used in gap cells | 0.90 |
+| `--write-sim-matrix` / `--no-write-sim-matrix` | Write pairwise % identity matrices for MSA panels | True |
 
 ### Per-domain panel (query) controls
 

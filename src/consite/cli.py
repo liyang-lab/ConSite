@@ -8,6 +8,7 @@ from Bio import SeqIO
 import numpy as np
 import re
 import shutil
+import html
 from typing import Tuple
 
 
@@ -17,7 +18,7 @@ from .parse_domtbl import parse_domtbl
 from .pfam import extract_seed_for_accession
 from .msa_io import read_stockholm, read_stockholm_with_meta
 from .conserve import scores_from_msa
-from .viz import plot_domain_map, plot_alignment_panel, plot_msa_with_gradient  # <-- added import
+from .viz import plot_domain_map, plot_alignment_panel, plot_msa_with_gradient, plot_similarity_matrix  # <-- added import
 
 def _split_id_range(s: str) -> Tuple[str, str]:
     """Split "A0A...._HUMAN/24-115" -> ("A0A...._HUMAN", "24-115")"""
@@ -58,6 +59,211 @@ def _write_scores_tsv(
             )
 
 
+def _generate_html_report(run_dir: Path, quiet: bool = False) -> None:
+    """Generate HTML report by calling the consite_make_report module."""
+    import csv
+
+    domain_map = run_dir / "domain_map.png"
+    hits_json = run_dir / "hits.json"
+    scores_tsv = run_dir / "scores.tsv"
+    query_fa = run_dir / "query.fasta"
+    domtbl = run_dir / "hmmsearch.domtblout"
+
+    def read_first_fasta_header(p: Path) -> tuple[str, int]:
+        hdr, length = "?", 0
+        if not p.exists():
+            return hdr, length
+        with p.open() as f:
+            for line in f:
+                if line.startswith(">"):
+                    hdr = line.strip()[1:]
+                else:
+                    length += len(line.strip())
+        return hdr, length
+
+    def read_hits(p: Path):
+        if not p.exists():
+            return []
+        return json.loads(p.read_text())
+
+    def sniff_domains(rd: Path):
+        panels = sorted(rd.glob("*_panel.png"))
+        domains = []
+        for panel in panels:
+            stem = panel.stem
+            parts = stem.split("_")
+            if len(parts) >= 2 and parts[0].isdigit():
+                idx = int(parts[0])
+                pf = parts[1]
+                msa = panel.with_name(f"{idx}_{pf}_msa.png")
+                sto = panel.with_name(f"{idx}_{pf}_aligned.sto")
+                domains.append({
+                    "idx": idx,
+                    "pf": pf,
+                    "panel": panel.name,
+                    "msa": msa.name if msa.exists() else None,
+                    "sto": sto.name if sto.exists() else None,
+                })
+        domains.sort(key=lambda d: d["idx"])
+        return domains
+
+    def small_table_from_scores(scores_path: Path, max_rows=200):
+        rows = []
+        if not scores_path.exists():
+            return rows
+        with scores_path.open() as f:
+            r = csv.DictReader(f, delimiter="\t")
+            for i, row in enumerate(r):
+                if i >= max_rows:
+                    break
+                rows.append({
+                    "pos": row["pos"],
+                    "in_domain": row["in_domain"],
+                    "jsd": row["jsd"],
+                    "entropy": row["entropy"],
+                    "is_conserved": row["is_conserved"],
+                })
+        return rows
+
+    query_hdr, query_len = read_first_fasta_header(query_fa)
+    hits = read_hits(hits_json)
+    domains = sniff_domains(run_dir)
+    scores_preview = small_table_from_scores(scores_tsv)
+
+    # Build HTML
+    title = f"ConSite report — {run_dir.name}"
+    css = """
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; color:#111; }
+    header { margin-bottom: 20px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px 0; }
+    .sub { color:#666; font-size: 0.95rem; }
+    .section { margin: 26px 0; }
+    .grid { display:grid; gap:14px; }
+    .two { grid-template-columns: 1fr 1fr; }
+    img { max-width: 100%; height:auto; border:1px solid #e5e7eb; border-radius:10px; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:14px; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
+    .muted { color:#6b7280; }
+    .kvs { display:grid; grid-template-columns: max-content 1fr; gap:6px 12px; }
+    .k { color:#6b7280; }
+    details summary { cursor:pointer; font-weight:600; }
+    table { border-collapse: collapse; width:100%; font-size: 0.9rem; }
+    th, td { border-bottom:1px solid #eee; padding:6px 8px; text-align:left; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    footer { margin-top: 28px; color:#6b7280; font-size:0.85rem; }
+    .pf { font-weight:600; }
+    """
+
+    def esc(s):
+        return html.escape(str(s))
+
+    # Hits table rows
+    hits_rows = ""
+    for h in hits:
+        hits_rows += f"<tr><td class='pf'>{esc(h.get('family',''))}</td><td>{esc(h.get('ali_start',''))}-{esc(h.get('ali_end',''))}</td><td>{esc(h.get('evalue',''))}</td><td>{esc(h.get('score',''))}</td></tr>"
+
+    # Domains blocks
+    dom_blocks = []
+    for d in domains:
+        items = []
+        items.append(
+            f"<div class='card'><div class='muted'>Per-domain panel</div><img src='{esc(d['panel'])}' alt='{esc(d['panel'])}'></div>"
+        )
+        if d["msa"]:
+            items.append(
+                f"<div class='card'><div class='muted'>SEED MSA panel</div><img src='{esc(d['msa'])}' alt='{esc(d['msa'])}'></div>"
+            )
+        sto_link = (
+            f"<a href='{esc(d['sto'])}' download>{esc(d['sto'])}</a>"
+            if d["sto"]
+            else ""
+        )
+        dom_blocks.append(f"""
+        <section class='section'>
+          <h3>Domain {d['idx']}: <span class='pf'>{esc(d['pf'])}</span></h3>
+          <div class='grid two'>
+            {''.join(items)}
+          </div>
+          <div class='muted' style="margin-top:8px;">{sto_link}</div>
+        </section>
+        """)
+
+    # Scores preview
+    score_rows = ""
+    for r in scores_preview[:100]:
+        score_rows += f"<tr><td>{r['pos']}</td><td>{r['in_domain']}</td><td>{r['jsd']}</td><td>{r['entropy']}</td><td>{r['is_conserved']}</td></tr>"
+
+    html_doc = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{esc(title)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>{css}</style>
+</head>
+<body>
+<header>
+  <h1>{esc(title)}</h1>
+  <div class="sub">{esc(run_dir)}</div>
+</header>
+
+<section class="section card">
+  <div class="kvs">
+    <div class="k">Query</div><div>{esc(query_hdr)}</div>
+    <div class="k">Length</div><div>{query_len}</div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>Overview</h2>
+  <div class="grid two">
+    <div class="card">
+      <div class="muted">Domain map</div>
+      <img src="{esc(domain_map.name) if domain_map.exists() else ''}" alt="domain_map">
+    </div>
+    <div class="card">
+      <div class="muted">Hits</div>
+      <table>
+        <thead><tr><th>Pfam</th><th>Aligned range</th><th>i-Evalue</th><th>Score</th></tr></thead>
+        <tbody>{hits_rows if hits_rows else "<tr><td colspan='4' class='muted'>No hits</td></tr>"}</tbody>
+      </table>
+      <div style="margin-top:8px" class="muted">
+        Downloads:
+        {'<a href="'+esc(hits_json.name)+'" download>hits.json</a>' if hits_json.exists() else ''}
+        &nbsp;&middot;&nbsp;
+        {'<a href="'+esc(domtbl.name)+'" download>hmmsearch.domtblout</a>' if domtbl.exists() else ''}
+        &nbsp;&middot;&nbsp;
+        {'<a href="'+esc(scores_tsv.name)+'" download>scores.tsv</a>' if scores_tsv.exists() else ''}
+        &nbsp;&middot;&nbsp;
+        {'<a href="'+esc(query_fa.name)+'" download>query.fasta</a>' if query_fa.exists() else ''}
+      </div>
+    </div>
+  </div>
+</section>
+
+{"".join(dom_blocks)}
+
+<section class="section card">
+  <details>
+    <summary>Scores preview (first 100 rows)</summary>
+    <div style="margin-top:10px; max-height:320px; overflow:auto;">
+      <table>
+        <thead><tr><th>pos</th><th>in_domain</th><th>jsd</th><th>entropy</th><th>is_conserved</th></tr></thead>
+        <tbody>{score_rows if score_rows else "<tr><td colspan='5' class='muted'>scores.tsv missing</td></tr>"}</tbody>
+      </table>
+    </div>
+  </details>
+</section>
+
+<footer>Generated by ConSite static report builder.</footer>
+</body>
+</html>
+"""
+    out_html = run_dir / "report.html"
+    out_html.write_text(html_doc, encoding="utf-8")
+    if not quiet:
+        print(f"[OK] Wrote {out_html}")
+
+
 def run_pipeline(
     fasta: Path,
     outdir: Path,
@@ -85,6 +291,8 @@ def run_pipeline(
     gap_glyph: str = "dash",                 # <-- new
     gap_cell_brightness: float = 0.9,        # <-- new
     cons_weight_coverage: float = 1.0,       # <-- new
+    write_sim_matrix: bool = True,           # <-- new
+    html_report: bool = False,               # <-- new
 ) -> None:
     """Run either local Pfam/HMMER pipeline or (placeholder) remote CDD mode."""
     ensure_dir(outdir)
@@ -267,6 +475,16 @@ def run_pipeline(
                 gap_cell_brightness=gap_cell_brightness
             )
 
+            # Similarity matrix (pairwise % identity) for the same rows/cols
+            if write_sim_matrix:
+                import pandas as pd
+                sim_png = outdir / f"{i}_{h.family}_sim.png"
+                M = plot_similarity_matrix(final_msa, final_names, sim_png)
+
+                # Also write TSV
+                sim_tsv = outdir / f"{i}_{h.family}_sim.tsv"
+                pd.DataFrame(M, index=final_names, columns=final_names).to_csv(sim_tsv, sep="\t", float_format="%.2f")
+
             # Score conservation (JSD/entropy) and call top X% within domain span
             msa, _ = read_stockholm(sto)
             scores = scores_from_msa(msa)
@@ -322,6 +540,12 @@ def run_pipeline(
     if len(conserved_positions_global) == 0 and not quiet:
         print("[INFO] No conserved positions were called (check JSD cutoff or alignment).")
 
+    # Generate HTML report if requested
+    if html_report:
+        if not quiet:
+            print("[INFO] Generating HTML report...")
+        _generate_html_report(outdir, quiet=quiet)
+
 
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="ConSite CLI")
@@ -373,6 +597,16 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--cons-weight-coverage", type=float, default=1.0,
                    help="Alpha for coverage weighting in conservation (1.0 = linear).")
 
+    # Similarity matrix
+    p.add_argument("--write-sim-matrix", action="store_true", default=True,
+                   help="Write pairwise % identity matrices for MSA panels (default: True).")
+    p.add_argument("--no-write-sim-matrix", dest="write_sim_matrix", action="store_false",
+                   help="Do not write similarity matrices.")
+
+    # HTML report
+    p.add_argument("--html-report", action="store_true",
+                   help="Generate a static HTML report after pipeline completes.")
+
     # Logging / verbosity
     p.add_argument("--log", type=Path, default=None, help="Append external tool logs here.")
     p.add_argument("--quiet", action="store_true", help="Suppress tool stdout/stderr.")
@@ -392,7 +626,7 @@ def main():
             "Either use --remote-cdd (remote CDD mode) OR provide both "
             "--pfam-hmm and --pfam-seed for local Pfam/HMMER mode."
         )
-    
+
     if not args.remote_cdd:
         _ensure_hmmer_or_exit()
 
@@ -422,6 +656,8 @@ def main():
         gap_glyph=args.gap_glyph,                       # <-- new
         gap_cell_brightness=args.gap_cell_brightness,   # <-- new
         cons_weight_coverage=args.cons_weight_coverage, # <-- new
+        write_sim_matrix=args.write_sim_matrix,         # <-- new
+        html_report=args.html_report,                   # <-- new
     )
 
 
