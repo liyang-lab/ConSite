@@ -43,6 +43,67 @@ def sniff_domains(run_dir: Path):
     domains.sort(key=lambda d: d["idx"])
     return domains
 
+def sniff_structure(run_dir: Path):
+    """Check for structure-related files and return metadata."""
+    struct_dir = run_dir / "structure"
+    if not struct_dir.exists():
+        return None
+
+    # Look for key structure files
+    structure_data = {
+        "has_structure": False,
+        "model_pdb": None,
+        "consurf_pdb": None,
+        "foldseek_tsv": None,
+        "domain_front_png": None,
+        "domain_back_png": None,
+        "cons_front_png": None,
+        "cons_back_png": None,
+    }
+
+    # Check for PDB files
+    for pdb in struct_dir.glob("*_model.pdb"):
+        structure_data["model_pdb"] = f"structure/{pdb.name}"
+        structure_data["has_structure"] = True
+        break
+
+    for pdb in struct_dir.glob("*_model_consurf.pdb"):
+        structure_data["consurf_pdb"] = f"structure/{pdb.name}"
+        break
+
+    # Check for Foldseek results
+    foldseek = struct_dir / "foldseek.tsv"
+    if foldseek.exists():
+        structure_data["foldseek_tsv"] = f"structure/{foldseek.name}"
+
+    # Check for static renders
+    for png in struct_dir.glob("model_domain_front.png"):
+        structure_data["domain_front_png"] = f"structure/{png.name}"
+    for png in struct_dir.glob("model_domain_back.png"):
+        structure_data["domain_back_png"] = f"structure/{png.name}"
+    for png in struct_dir.glob("model_cons_front.png"):
+        structure_data["cons_front_png"] = f"structure/{png.name}"
+    for png in struct_dir.glob("model_cons_back.png"):
+        structure_data["cons_back_png"] = f"structure/{png.name}"
+
+    return structure_data if structure_data["has_structure"] else None
+
+def read_foldseek_hits(foldseek_tsv: Path, max_hits: int = 10):
+    """Read Foldseek TSV and return top hits."""
+    if not foldseek_tsv.exists():
+        return []
+
+    hits = []
+    with foldseek_tsv.open() as f:
+        reader = csv.DictReader(f, delimiter="\t", fieldnames=[
+            "target_id", "target_desc", "evalue", "tm", "alntmscore", "rmsd", "qlen", "tlen"
+        ])
+        for i, row in enumerate(reader):
+            if i >= max_hits:
+                break
+            hits.append(row)
+    return hits
+
 def small_table_from_scores(scores_tsv: Path, max_rows=200):
     rows = []
     if not scores_tsv.exists(): return rows
@@ -79,6 +140,13 @@ def main():
     hits = read_hits(hits_json)
     domains = sniff_domains(run_dir)
     scores_preview = small_table_from_scores(scores_tsv)
+    structure = sniff_structure(run_dir)
+
+    # Read Foldseek hits if available
+    foldseek_hits = []
+    if structure and structure.get("foldseek_tsv"):
+        foldseek_path = run_dir / structure["foldseek_tsv"]
+        foldseek_hits = read_foldseek_hits(foldseek_path)
 
     # Build HTML
     title = f"ConSite report — {run_dir.name}"
@@ -168,6 +236,91 @@ def main():
         </section>
         """)
 
+    # Structure section
+    structure_section = ""
+    if structure:
+        struct_items = []
+
+        # Interactive viewer (Mol*)
+        if structure.get("consurf_pdb"):
+            viewer_html = f"""
+            <div class='card'>
+              <div class='muted'>Interactive 3D viewer (Mol*)</div>
+              <div id="molstar-viewer" style="width:100%; height:500px; position:relative;"></div>
+              <div class='muted' style="margin-top:8px;">
+                Download: <a href="{esc(structure['consurf_pdb'])}" download>model_consurf.pdb</a>
+                {' &middot; <a href="' + esc(structure['model_pdb']) + '" download>model.pdb</a>' if structure.get('model_pdb') else ''}
+              </div>
+            </div>
+            """
+            struct_items.append(viewer_html)
+
+        # Static renders (if available)
+        render_items = []
+        if structure.get("domain_front_png"):
+            render_items.append(f"""
+            <div class='card'>
+              <div class='muted'>Domain-colored structure (front)</div>
+              <a class="zoom" href="{esc(structure['domain_front_png'])}" data-title="Domain-colored structure">
+                <img src='{esc(structure['domain_front_png'])}' alt='Structure front view'>
+              </a>
+            </div>
+            """)
+        if structure.get("cons_front_png"):
+            render_items.append(f"""
+            <div class='card'>
+              <div class='muted'>Conservation-colored structure</div>
+              <a class="zoom" href="{esc(structure['cons_front_png'])}" data-title="Conservation-colored structure">
+                <img src='{esc(structure['cons_front_png'])}' alt='Conservation front view'>
+              </a>
+            </div>
+            """)
+
+        # Foldseek hits table
+        if foldseek_hits:
+            foldseek_rows = ""
+            for hit in foldseek_hits[:10]:
+                # Create PDB link if target_id looks like a PDB ID
+                target_link = hit['target_id']
+                if len(hit['target_id']) == 4 or hit['target_id'].startswith('AF-'):
+                    pdb_url = f"https://www.rcsb.org/structure/{hit['target_id'][:4]}"
+                    target_link = f"<a href='{pdb_url}' target='_blank'>{esc(hit['target_id'])}</a>"
+
+                foldseek_rows += f"""<tr>
+                  <td>{target_link}</td>
+                  <td>{esc(hit.get('target_desc', ''))[:60]}</td>
+                  <td>{esc(hit.get('evalue', ''))}</td>
+                  <td>{esc(hit.get('tm', ''))}</td>
+                  <td>{esc(hit.get('rmsd', ''))}</td>
+                </tr>"""
+
+            foldseek_table = f"""
+            <div class='card'>
+              <div class='muted'>Foldseek structural similarity hits</div>
+              <div style="max-height:320px; overflow:auto; margin-top:8px;">
+                <table>
+                  <thead><tr><th>Target</th><th>Description</th><th>E-value</th><th>TM-score</th><th>RMSD</th></tr></thead>
+                  <tbody>{foldseek_rows}</tbody>
+                </table>
+              </div>
+              <div class='muted' style="margin-top:8px;">
+                Download: <a href="{esc(structure['foldseek_tsv'])}" download>foldseek.tsv</a>
+              </div>
+            </div>
+            """
+            struct_items.append(foldseek_table)
+
+        # Build the structure section
+        structure_section = f"""
+        <section class='section'>
+          <h2>Protein Structure</h2>
+          <div class='grid {"two" if len(render_items) > 0 else ""}'>
+            {''.join(struct_items)}
+          </div>
+          {('<div class="grid two" style="margin-top:14px;">' + ''.join(render_items) + '</div>') if render_items else ''}
+        </section>
+        """
+
     # Scores preview
     score_rows = ""
     for r in scores_preview[:100]:
@@ -222,6 +375,8 @@ def main():
     </div>
   </div>
 </section>
+
+{structure_section}
 
 {"".join(dom_blocks)}
 
@@ -282,6 +437,31 @@ def main():
   viewer.addEventListener('click', (e) => { if (e.target === viewer) dismiss(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') dismiss(); });
 })();
+</script>
+
+{'<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/molstar@latest/build/viewer/molstar.js"></script>' if structure and structure.get('consurf_pdb') else ''}
+{'<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/molstar@latest/build/viewer/molstar.css" />' if structure and structure.get('consurf_pdb') else ''}
+
+<script>
+// Initialize Mol* viewer if structure is available
+(function() {
+  const viewerElem = document.getElementById('molstar-viewer');
+  if (!viewerElem) return;
+
+  molstar.Viewer.create('molstar-viewer', {{
+    layoutIsExpanded: false,
+    layoutShowControls: true,
+    layoutShowRemoteState: false,
+    layoutShowSequence: true,
+    layoutShowLog: false,
+    layoutShowLeftPanel: true,
+    viewportShowExpand: true,
+    viewportShowSelectionMode: true,
+    viewportShowAnimation: false,
+  }}).then(viewer => {{
+    viewer.loadPdb('{structure.get("consurf_pdb", "") if structure else ""}');
+  }});
+}})();
 </script>
 </body>
 </html>
