@@ -18,7 +18,13 @@ from .parse_domtbl import parse_domtbl
 from .pfam import extract_seed_for_accession
 from .msa_io import read_stockholm, read_stockholm_with_meta
 from .conserve import scores_from_msa
-from .viz import plot_domain_map, plot_alignment_panel, plot_msa_with_gradient, plot_similarity_matrix  # <-- added import
+from .viz import plot_domain_map, plot_alignment_panel, plot_msa_with_gradient, plot_similarity_matrix
+from .structure import (
+    run_colabfold,
+    run_foldseek,
+    write_bfactor_from_scores,
+    render_static_pngs,
+)
 
 def _split_id_range(s: str) -> Tuple[str, str]:
     """Split "A0A...._HUMAN/24-115" -> ("A0A...._HUMAN", "24-115")"""
@@ -62,6 +68,7 @@ def _write_scores_tsv(
 def _generate_html_report(run_dir: Path, quiet: bool = False) -> None:
     """Generate HTML report by calling the consite_make_report module."""
     import csv
+    from .structure import get_foldseek_hits_summary
 
     domain_map = run_dir / "domain_map.png"
     hits_json = run_dir / "hits.json"
@@ -125,10 +132,57 @@ def _generate_html_report(run_dir: Path, quiet: bool = False) -> None:
                 })
         return rows
 
+    def sniff_structure(rd: Path):
+        """Check for structure-related files and return metadata."""
+        struct_dir = rd / "structure"
+        if not struct_dir.exists():
+            return None
+
+        structure_data = {
+            "has_structure": False,
+            "model_pdb": None,
+            "consurf_pdb": None,
+            "foldseek_tsv": None,
+            "domain_front_png": None,
+            "domain_back_png": None,
+            "cons_front_png": None,
+            "cons_back_png": None,
+        }
+
+        for pdb in struct_dir.glob("*_model.pdb"):
+            structure_data["model_pdb"] = f"structure/{pdb.name}"
+            structure_data["has_structure"] = True
+            break
+        for pdb in struct_dir.glob("*_model_consurf.pdb"):
+            structure_data["consurf_pdb"] = f"structure/{pdb.name}"
+            break
+
+        foldseek = struct_dir / "foldseek.tsv"
+        if foldseek.exists():
+            structure_data["foldseek_tsv"] = f"structure/{foldseek.name}"
+
+        for png in struct_dir.glob("model_domain_front.png"):
+            structure_data["domain_front_png"] = f"structure/{png.name}"
+        for png in struct_dir.glob("model_domain_back.png"):
+            structure_data["domain_back_png"] = f"structure/{png.name}"
+        for png in struct_dir.glob("model_cons_front.png"):
+            structure_data["cons_front_png"] = f"structure/{png.name}"
+        for png in struct_dir.glob("model_cons_back.png"):
+            structure_data["cons_back_png"] = f"structure/{png.name}"
+
+        return structure_data if structure_data["has_structure"] else None
+
     query_hdr, query_len = read_first_fasta_header(query_fa)
     hits = read_hits(hits_json)
     domains = sniff_domains(run_dir)
     scores_preview = small_table_from_scores(scores_tsv)
+    structure = sniff_structure(run_dir)
+
+    # Read Foldseek hits if available
+    foldseek_hits = []
+    if structure and structure.get("foldseek_tsv"):
+        foldseek_path = run_dir / structure["foldseek_tsv"]
+        foldseek_hits = get_foldseek_hits_summary(foldseek_path)
 
     # Build HTML
     title = f"ConSite report — {run_dir.name}"
@@ -187,6 +241,86 @@ def _generate_html_report(run_dir: Path, quiet: bool = False) -> None:
         </section>
         """)
 
+    # Structure section
+    structure_section = ""
+    if structure:
+        struct_items = []
+
+        # Interactive viewer (Mol*)
+        if structure.get("consurf_pdb"):
+            viewer_html = f"""
+            <div class='card'>
+              <div class='muted'>Interactive 3D viewer (Mol*)</div>
+              <div id="molstar-viewer" style="width:100%; height:500px; position:relative;"></div>
+              <div class='muted' style="margin-top:8px;">
+                Download: <a href="{esc(structure['consurf_pdb'])}" download>model_consurf.pdb</a>
+                {' &middot; <a href="' + esc(structure['model_pdb']) + '" download>model.pdb</a>' if structure.get('model_pdb') else ''}
+              </div>
+            </div>
+            """
+            struct_items.append(viewer_html)
+
+        # Static renders (if available)
+        render_items = []
+        if structure.get("domain_front_png"):
+            render_items.append(f"""
+            <div class='card'>
+              <div class='muted'>Domain-colored structure (front)</div>
+              <img src='{esc(structure["domain_front_png"])}' alt='Structure front view'>
+            </div>
+            """)
+        if structure.get("cons_front_png"):
+            render_items.append(f"""
+            <div class='card'>
+              <div class='muted'>Conservation-colored structure</div>
+              <img src='{esc(structure["cons_front_png"])}' alt='Conservation front view'>
+            </div>
+            """)
+
+        # Foldseek hits table
+        if foldseek_hits:
+            foldseek_rows = ""
+            for hit in foldseek_hits[:10]:
+                target_link = hit['target_id']
+                if len(hit['target_id']) == 4 or hit['target_id'].startswith('AF-'):
+                    pdb_url = f"https://www.rcsb.org/structure/{hit['target_id'][:4]}"
+                    target_link = f"<a href='{pdb_url}' target='_blank'>{esc(hit['target_id'])}</a>"
+
+                foldseek_rows += f"""<tr>
+                  <td>{target_link}</td>
+                  <td>{esc(hit.get('target_desc', ''))[:60]}</td>
+                  <td>{esc(hit.get('evalue', ''))}</td>
+                  <td>{esc(hit.get('tm', ''))}</td>
+                  <td>{esc(hit.get('rmsd', ''))}</td>
+                </tr>"""
+
+            foldseek_table = f"""
+            <div class='card'>
+              <div class='muted'>Foldseek structural similarity hits</div>
+              <div style="max-height:320px; overflow:auto; margin-top:8px;">
+                <table>
+                  <thead><tr><th>Target</th><th>Description</th><th>E-value</th><th>TM-score</th><th>RMSD</th></tr></thead>
+                  <tbody>{foldseek_rows}</tbody>
+                </table>
+              </div>
+              <div class='muted' style="margin-top:8px;">
+                Download: <a href="{esc(structure['foldseek_tsv'])}" download>foldseek.tsv</a>
+              </div>
+            </div>
+            """
+            struct_items.append(foldseek_table)
+
+        # Build the structure section
+        structure_section = f"""
+        <section class='section'>
+          <h2>Protein Structure</h2>
+          <div class='grid {"two" if len(render_items) > 0 else ""}'>
+            {''.join(struct_items)}
+          </div>
+          {('<div class="grid two" style="margin-top:14px;">' + ''.join(render_items) + '</div>') if render_items else ''}
+        </section>
+        """
+
     # Scores preview
     score_rows = ""
     for r in scores_preview[:100]:
@@ -240,6 +374,8 @@ def _generate_html_report(run_dir: Path, quiet: bool = False) -> None:
   </div>
 </section>
 
+{structure_section}
+
 {"".join(dom_blocks)}
 
 <section class="section card">
@@ -255,6 +391,31 @@ def _generate_html_report(run_dir: Path, quiet: bool = False) -> None:
 </section>
 
 <footer>Generated by ConSite static report builder.</footer>
+
+{'<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/molstar@latest/build/viewer/molstar.js"></script>' if structure and structure.get('consurf_pdb') else ''}
+{'<link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/molstar@latest/build/viewer/molstar.css" />' if structure and structure.get('consurf_pdb') else ''}
+
+<script>
+// Initialize Mol* viewer if structure is available
+(function() {{
+  const viewerElem = document.getElementById('molstar-viewer');
+  if (!viewerElem) return;
+
+  molstar.Viewer.create('molstar-viewer', {{
+    layoutIsExpanded: false,
+    layoutShowControls: true,
+    layoutShowRemoteState: false,
+    layoutShowSequence: true,
+    layoutShowLog: false,
+    layoutShowLeftPanel: true,
+    viewportShowExpand: true,
+    viewportShowSelectionMode: true,
+    viewportShowAnimation: false,
+  }}).then(viewer => {{
+    viewer.loadPdb('{structure.get("consurf_pdb", "") if structure else ""}');
+  }});
+}})();
+</script>
 </body>
 </html>
 """
@@ -285,14 +446,23 @@ def run_pipeline(
     msa_include_query: bool = False,
     msa_min_brightness: float = 0.25,
     panel_min_brightness: float = 0.18,
-    panel_bg: str = "jsd",                   # <-- new
-    msa_min_coverage: float = 0.3,           # <-- new
-    mask_inserts: bool = True,               # <-- new
-    gap_glyph: str = "dash",                 # <-- new
-    gap_cell_brightness: float = 0.9,        # <-- new
-    cons_weight_coverage: float = 1.0,       # <-- new
-    write_sim_matrix: bool = True,           # <-- new
-    html_report: bool = False,               # <-- new
+    panel_bg: str = "jsd",
+    msa_min_coverage: float = 0.3,
+    mask_inserts: bool = True,
+    gap_glyph: str = "dash",
+    gap_cell_brightness: float = 0.9,
+    cons_weight_coverage: float = 1.0,
+    write_sim_matrix: bool = True,
+    html_report: bool = False,
+    # Structure analysis parameters
+    predict_structure: bool = False,
+    pdb: Optional[Path] = None,
+    colabfold_args: str = "--amber --templates off",
+    foldseek_db: Optional[Path] = None,
+    foldseek_topk: int = 10,
+    no_foldseek: bool = False,
+    cons_to_bfactor: str = "jsd",
+    no_structure_renders: bool = False,
 ) -> None:
     """Run either local Pfam/HMMER pipeline or (placeholder) remote CDD mode."""
     ensure_dir(outdir)
@@ -540,6 +710,101 @@ def run_pipeline(
     if len(conserved_positions_global) == 0 and not quiet:
         print("[INFO] No conserved positions were called (check JSD cutoff or alignment).")
 
+    # Structure analysis pipeline
+    if predict_structure or pdb is not None:
+        if not quiet:
+            print("[INFO] Running structure analysis pipeline...")
+
+        # Create structure directory
+        struct_dir = outdir / "structure"
+        ensure_dir(struct_dir)
+
+        # Step 1: Get or predict PDB
+        model_pdb = struct_dir / f"{safe_id}_model.pdb"
+        if pdb is not None:
+            # Use provided PDB
+            if not pdb.exists():
+                if not quiet:
+                    print(f"[ERROR] Provided PDB file not found: {pdb}")
+            else:
+                shutil.copy(pdb, model_pdb)
+                if not quiet:
+                    print(f"[OK] Using provided PDB: {pdb}")
+        elif predict_structure:
+            # Run ColabFold
+            if not quiet:
+                print("[INFO] Running ColabFold structure prediction...")
+            success = run_colabfold(
+                fasta=seq_fa,
+                out_pdb=model_pdb,
+                log=log_path,
+                quiet=quiet,
+                colabfold_args=colabfold_args
+            )
+            if not success:
+                if not quiet:
+                    print("[ERROR] ColabFold prediction failed; skipping structure analysis.")
+                model_pdb = None
+
+        # Step 2: Map conservation to B-factors
+        if model_pdb and model_pdb.exists():
+            consurf_pdb = struct_dir / f"{safe_id}_model_consurf.pdb"
+            scores_file = outdir / "scores.tsv"
+            if scores_file.exists():
+                try:
+                    write_bfactor_from_scores(
+                        pdb_in=model_pdb,
+                        scores_tsv=scores_file,
+                        pdb_out=consurf_pdb,
+                        track=cons_to_bfactor
+                    )
+                    if not quiet:
+                        print(f"[OK] Conservation scores mapped to B-factors: {consurf_pdb}")
+                except Exception as e:
+                    if not quiet:
+                        print(f"[ERROR] Failed to map conservation to B-factors: {e}")
+
+        # Step 3: Run Foldseek if database is provided
+        if model_pdb and model_pdb.exists() and foldseek_db and not no_foldseek:
+            if not quiet:
+                print("[INFO] Running Foldseek structural search...")
+            foldseek_tsv = struct_dir / "foldseek.tsv"
+            foldseek_tmp = struct_dir / "tmp"
+            try:
+                success = run_foldseek(
+                    query_pdb=model_pdb,
+                    db=foldseek_db,
+                    out_tsv=foldseek_tsv,
+                    tmpdir=foldseek_tmp,
+                    log=log_path,
+                    quiet=quiet,
+                    topk=foldseek_topk
+                )
+                if success and not quiet:
+                    print(f"[OK] Foldseek results: {foldseek_tsv}")
+            except Exception as e:
+                if not quiet:
+                    print(f"[ERROR] Foldseek search failed: {e}")
+
+        # Step 4: Render static PNGs (placeholder for now)
+        if model_pdb and model_pdb.exists() and not no_structure_renders:
+            if not quiet:
+                print("[INFO] Rendering static structure images...")
+            front_png = struct_dir / "model_domain_front.png"
+            back_png = struct_dir / "model_domain_back.png"
+            try:
+                render_static_pngs(
+                    pdb_in=model_pdb,
+                    out_front=front_png,
+                    out_back=back_png,
+                    color_mode="domain",
+                    log=log_path,
+                    quiet=quiet
+                )
+            except Exception as e:
+                if not quiet:
+                    print(f"[WARN] Static rendering not yet implemented: {e}")
+
     # Generate HTML report if requested
     if html_report:
         if not quiet:
@@ -607,6 +872,26 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--html-report", action="store_true",
                    help="Generate a static HTML report after pipeline completes.")
 
+    # Structure prediction and analysis
+    p.add_argument("--predict-structure", action="store_true",
+                   help="Run ColabFold to predict protein structure.")
+    p.add_argument("--pdb", type=Path, default=None,
+                   help="Use existing PDB file (skip structure prediction).")
+    p.add_argument("--colabfold-args", type=str, default="--amber --templates off",
+                   help="Additional arguments to pass to colabfold_batch.")
+
+    p.add_argument("--foldseek-db", type=Path, default=None,
+                   help="Path to Foldseek database for structural similarity search.")
+    p.add_argument("--foldseek-topk", type=int, default=10,
+                   help="Number of top Foldseek hits to report.")
+    p.add_argument("--no-foldseek", action="store_true",
+                   help="Skip Foldseek search even if PDB is present.")
+
+    p.add_argument("--cons-to-bfactor", choices=["jsd", "entropy"], default="jsd",
+                   help="Map conservation scores to PDB B-factors (jsd or entropy).")
+    p.add_argument("--no-structure-renders", action="store_true",
+                   help="Skip generating static PNG renders of structure.")
+
     # Logging / verbosity
     p.add_argument("--log", type=Path, default=None, help="Append external tool logs here.")
     p.add_argument("--quiet", action="store_true", help="Suppress tool stdout/stderr.")
@@ -650,14 +935,23 @@ def main():
         msa_include_query=args.msa_include_query,
         msa_min_brightness=args.msa_min_brightness,
         panel_min_brightness=args.panel_min_brightness,
-        panel_bg=args.panel_bg,                         # <-- new
-        msa_min_coverage=args.msa_min_coverage,         # <-- new
-        mask_inserts=args.mask_inserts,                 # <-- new
-        gap_glyph=args.gap_glyph,                       # <-- new
-        gap_cell_brightness=args.gap_cell_brightness,   # <-- new
-        cons_weight_coverage=args.cons_weight_coverage, # <-- new
-        write_sim_matrix=args.write_sim_matrix,         # <-- new
-        html_report=args.html_report,                   # <-- new
+        panel_bg=args.panel_bg,
+        msa_min_coverage=args.msa_min_coverage,
+        mask_inserts=args.mask_inserts,
+        gap_glyph=args.gap_glyph,
+        gap_cell_brightness=args.gap_cell_brightness,
+        cons_weight_coverage=args.cons_weight_coverage,
+        write_sim_matrix=args.write_sim_matrix,
+        html_report=args.html_report,
+        # Structure analysis parameters
+        predict_structure=args.predict_structure,
+        pdb=args.pdb,
+        colabfold_args=args.colabfold_args,
+        foldseek_db=args.foldseek_db,
+        foldseek_topk=args.foldseek_topk,
+        no_foldseek=args.no_foldseek,
+        cons_to_bfactor=args.cons_to_bfactor,
+        no_structure_renders=args.no_structure_renders,
     )
 
 
