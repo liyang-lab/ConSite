@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "consite"
-version = "0.1.3"
+version = "0.1.4"
 description = "ConSite: conserved-domain alignment and conserved-site visualization from protein FASTA"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,7 +17,7 @@ dependencies = [
   "biopython>=1.81",
   "pandas>=2.0",
   "numpy>=2.0",
-  "scipy>=1.16",
+  "scipy>=1.11,<2.0",
   "matplotlib>=3.7"
   # "seaborn>=0.12", # uncomment only if you import it in src/consite
 ]
