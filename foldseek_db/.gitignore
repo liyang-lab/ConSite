@@ -1,7 +1,0 @@
-
-# ConSite runtime/cache
-results/
-foldseek_db/
-.colabfold/
-*.aria2
-*.tar.gz

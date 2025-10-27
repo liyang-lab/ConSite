@@ -33,3 +33,10 @@ pfam_db/
 *.h3*
 *.ssi
 *.log
+results/
+foldseek_db/
+pfam_db/
+**/tmp/
+**/*.aria2
+**/*.tar.gz
+.colabfold/
