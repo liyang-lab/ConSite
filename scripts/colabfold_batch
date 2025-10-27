@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Proxy that runs colabfold_batch inside the cf-2.13 env.
+exec conda run -n cf-2.13 colabfold_batch "$@"
